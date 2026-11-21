@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Trend Bot Mini App</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    :root {
+      --bg: #0b0d10;
+      --card: #14181f;
+      --border: #232a36;
+      --text: #f3f6fa;
+      --muted: #8b95a5;
+      --accent: #22c55e;
+      --danger: #ef4444;
+    }
+    * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { margin: 0; background: var(--bg); color: var(--text); padding: 16px 16px 84px; }
+    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+    .badge { font-size: 12px; padding: 4px 10px; border-radius: 999px; background: #18281e; color: var(--accent); border: 1px solid #234730; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 14px; margin-bottom: 12px; }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    .stat-label { font-size: 11px; color: var(--muted); text-transform: uppercase; }
+    .stat-val { font-size: 16px; font-weight: 700; margin-top: 4px; }
+    .btn { width: 100%; padding: 12px; border-radius: 10px; border: none; font-weight: 600; cursor: pointer; background: var(--accent); color: #07110a; }
+    .btn.stop { background: var(--danger); color: #fff; }
+    .chip-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+    .chip { padding: 7px 11px; border-radius: 8px; background: #1b2029; border: 1px solid var(--border); color: var(--text); font-size: 12px; cursor: pointer; }
+    .chip.active { border-color: var(--accent); background: #14261b; color: var(--accent); }
+    .log { font-family: monospace; font-size: 12px; color: var(--muted); white-space: pre-wrap; max-height: 180px; overflow-y: auto; }
+    .nav { position: fixed; bottom: 0; left: 0; right: 0; background: #10141a; border-top: 1px solid var(--border); display: grid; grid-template-columns: repeat(3, 1fr); padding: 10px 0; }
+    .nav button { background: none; border: none; color: var(--muted); font-size: 12px; font-weight: 600; cursor: pointer; }
+    .nav button.active { color: var(--text); }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <div style="font-size:18px;font-weight:700;">Solana Trend Bot</div>
+      <div id="rpc-status" style="font-size:12px;color:var(--muted);">Paper Mode • Helius RPC</div>
+    </div>
+    <span id="run-badge" class="badge">STOPPED</span>
+  </div>
+
+  <div id="tab-bot">
+    <div class="card grid-3">
+      <div><div class="stat-label">Paper SOL</div><div id="paper-sol" class="stat-val">1.0000</div></div>
+      <div><div class="stat-label">Open Pos</div><div id="open-pos" class="stat-val">0</div></div>
+      <div><div class="stat-label">Last Slot</div><div id="last-slot" class="stat-val">--</div></div>
+    </div>
+
+    <div class="card">
+      <div style="font-weight:600;font-size:14px;">Trend Strategy</div>
+      <div id="strategy-chips" class="chip-row">
+        <button class="chip active" data-s="Breakout">Breakout</button>
+        <button class="chip" data-s="Momentum">Momentum</button>
+        <button class="chip" data-s="Runner">Runner</button>
+      </div>
+      <div style="font-weight:600;font-size:14px;margin-top:12px;">Risk Level</div>
+      <div id="risk-chips" class="chip-row">
+        <button class="chip" data-r="Conservative">Conservative</button>
+        <button class="chip active" data-r="Balanced">Balanced</button>
+        <button class="chip" data-r="Aggressive">Aggressive</button>
+      </div>
+      <button id="toggle-btn" class="btn" style="margin-top:14px;" onclick="toggleBot()">Start Paper Session</button>
+    </div>
+
+    <div class="card">
+      <div style="font-weight:600;font-size:14px;margin-bottom:8px;">Activity Log</div>
+      <div id="logs" class="log">Waiting for backend...</div>
+    </div>
+  </div>
+
+  <div id="tab-wallet" class="hidden">
+    <div class="card">
+      <div style="font-weight:600;font-size:14px;margin-bottom:6px;">Open Paper Positions</div>
+      <div id="positions-list" style="font-size:13px;color:var(--muted);">No open positions yet.</div>
+    </div>
+  </div>
+
+  <div id="tab-profile" class="hidden">
+    <div class="card">
+      <div style="font-weight:600;font-size:14px;margin-bottom:6px;">Safety & Guardrails</div>
+      <div style="font-size:13px;color:var(--muted);line-height:1.5;">
+        • Defaults to simulated paper trading before any real SOL swap.<br/>
+        • Keep your Helius API key and Phantom keys in Railway Variables, never in GitHub.<br/>
+        • Track trades carefully for Canadian tax reporting.
+      </div>
+    </div>
+  </div>
+
+  <div class="nav">
+    <button id="nav-bot" class="active" onclick="switchTab('bot')">Bot</button>
+    <button id="nav-wallet" onclick="switchTab('wallet')">Wallet</button>
+    <button id="nav-profile" onclick="switchTab('profile')">Profile</button>
+  </div>
+
+  <script>
+    const tg = window.Telegram && window.Telegram.WebApp;
+    if (tg) { tg.ready(); tg.expand(); }
+
+    const API_BASE = window.API_BASE_URL || "http://localhost:8000";
+    let currentStrategy = "Breakout";
+    let currentRisk = "Balanced";
+
+    function switchTab(name) {
+      ["bot", "wallet", "profile"].forEach(t => {
+        document.getElementById("tab-" + t).classList.toggle("hidden", t !== name);
+        document.getElementById("nav-" + t).classList.toggle("active", t === name);
+      });
+    }
+
+    document.querySelectorAll("#strategy-chips .chip").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        document.querySelectorAll("#strategy-chips .chip").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        currentStrategy = btn.dataset.s;
+        await sendStrategy();
+      });
+    });
+
+    document.querySelectorAll("#risk-chips .chip").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        document.querySelectorAll("#risk-chips .chip").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        currentRisk = btn.dataset.r;
+        await sendStrategy();
+      });
+    });
+
+    async function sendStrategy() {
+      await fetch(`${API_BASE}/api/strategy`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ strategy: currentStrategy, risk_level: currentRisk })
+      });
+    }
+
+    async function toggleBot() {
+      await fetch(`${API_BASE}/api/session/toggle`, { method: "POST" });
+      await refreshState();
+    }
+
+    async function refreshState() {
+      try {
+        const res = await fetch(`${API_BASE}/api/state`);
+        const data = await res.json();
+        const badge = document.getElementById("run-badge");
+        const btn = document.getElementById("toggle-btn");
+        badge.textContent = data.running ? "RUNNING" : "STOPPED";
+        btn.textContent = data.running ? "Stop Paper Session" : "Start Paper Session";
+        btn.classList.toggle("stop", !!data.running);
+
+        document.getElementById("paper-sol").textContent = Number(data.paper_balance_sol || 0).toFixed(4);
+        document.getElementById("open-pos").textContent = (data.open_positions || []).length;
+        document.getElementById("last-slot").textContent = data.last_slot ?? "--";
+        document.getElementById("logs").textContent = (data.logs || []).join("\n") || "No logs yet.";
+
+        const posEl = document.getElementById("positions-list");
+        if (!data.open_positions || !data.open_positions.length) {
+          posEl.textContent = "No open positions yet.";
+        } else {
+          posEl.innerHTML = data.open_positions.map(p =>
+            `<div style="padding:6px 0;border-bottom:1px solid #232a36;"><b>${p.symbol}</b> — ${p.size_sol} SOL @ $${p.entry_price_usd} (${p.mode})</div>`
+          ).join("");
+        }
+      } catch (e) {
+        document.getElementById("logs").textContent = "Cannot reach backend yet. Start uvicorn on port 8000.";
+      }
+    }
+
+    refreshState();
+    setInterval(refreshState, 4000);
+  </script>
+</body>
+</html>
