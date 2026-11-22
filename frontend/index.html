@@ -84,8 +84,8 @@
     <div class="sub">Paper-trade dashboard connected to Railway</div>
     <span id="statusPill" class="pill off">STOPPED</span>
     <div class="row">
-      <button class="start" onclick="sendAction('/api/start')">Start Bot</button>
-      <button class="stop" onclick="sendAction('/api/stop')">Stop Bot</button>
+      <button class="start" onclick="setRunning(true)">Start Bot</button>
+      <button class="stop" onclick="setRunning(false)">Stop Bot</button>
       <button class="refresh" onclick="loadState()">Refresh</button>
     </div>
   </div>
@@ -138,6 +138,7 @@
 
   <script>
     const API_BASE = "https://sol-trend-bot-production.up.railway.app";
+    let currentRunning = false;
 
     if (window.Telegram && window.Telegram.WebApp) {
       window.Telegram.WebApp.ready();
@@ -148,9 +149,10 @@
       try {
         const res = await fetch(`${API_BASE}/api/state`);
         const data = await res.json();
+        currentRunning = Boolean(data.running);
 
         const pill = document.getElementById("statusPill");
-        if (data.running) {
+        if (currentRunning) {
           pill.textContent = "RUNNING";
           pill.className = "pill on";
         } else {
@@ -175,9 +177,11 @@
       }
     }
 
-    async function sendAction(path) {
+    async function setRunning(targetRunning) {
       try {
-        await fetch(`${API_BASE}${path}`, { method: "POST" });
+        if (currentRunning !== targetRunning) {
+          await fetch(`${API_BASE}/api/session/toggle`, { method: "POST" });
+        }
         await loadState();
       } catch (err) {
         alert("Action failed: " + err.message);
@@ -190,7 +194,7 @@
         risk_level: document.getElementById("riskSelect").value
       };
       try {
-        await fetch(`${API_BASE}/api/settings`, {
+        await fetch(`${API_BASE}/api/strategy`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload)
